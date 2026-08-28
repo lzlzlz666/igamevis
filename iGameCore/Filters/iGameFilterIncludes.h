@@ -34,3 +34,9 @@
 #include "FeatureExtraction/iGameLaplacianFilter.h"
 #include "FeatureExtraction/iGameVortexDetectionFilter.h"
 #include "FeatureExtraction/iGameVortexFilter.h"
+
+//任务一
+#include "Coordinates/iGameCoordinatesFilter.h"
+#include "CellCenters/iGameCellCentersFilter.h"
+#include "CellCentersPointSet/iGameCellCentersPointSetFilter.h"
+#include "Threshold/iGameThresholdFilter.h"

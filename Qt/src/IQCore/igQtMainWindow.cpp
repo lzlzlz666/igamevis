@@ -104,6 +104,10 @@
 #include <QLineEdit>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QComboBox>
+
+#include <cmath>
+#include <limits>
 
 
 #include "ui_igQtVariableCorrelationWidget.h"
@@ -1107,7 +1111,7 @@ void igQtMainWindow::initAllComponents() {
         // 显示对话框
         dialog->show();
         // 设置应用按钮的回调函数
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             // 获取用户输入的线程数
             int newThreadCount = dialog->getInt(id1, ok);
@@ -1178,6 +1182,479 @@ void igQtMainWindow::initAllFilters() {
     };
 
     QMenu* mesh_processing = ui->menu_filters->addMenu(QStringLiteral("数据处理 (Data Processing)"));
+
+    /*
+     * Coordinates 和 CellCenters 都不会生成新的几何模型，而是在当前
+     * DataObject 的 AttributeSet 中追加一个属性。执行成功后统一刷新
+     * 模型树，并立即用新属性的模长着色，方便直接观察结果。
+     */
+    auto showGeneratedAttribute =
+        [this](iGame::DataObject::Pointer data,
+               const std::string& attributeName,
+               const QString& successText) {
+            if (data == nullptr || data->GetAttributeSet() == nullptr) {
+                return;
+            }
+
+            const int attributeIndex =
+                data->GetAttributeSet()->GetAttributeIndex(attributeName);
+            if (attributeIndex < 0) {
+                showDarkFramelessMessage(
+                    QStringLiteral("执行失败"),
+                    QStringLiteral("Filter 已执行，但没有找到生成的属性 %1。")
+                        .arg(QString::fromStdString(attributeName)));
+                return;
+            }
+
+            modelTreeWidget->updateAllAttriubute(data);
+
+            auto* item = modelTreeWidget->getItemFromObject(data);
+            if (item != nullptr) {
+                item->setExpanded(true);
+
+                QTreeWidgetItem* attributeItem = nullptr;
+                const QString targetName =
+                    QString::fromStdString(attributeName);
+                for (int childIndex = 0;
+                     childIndex < item->childCount();
+                     ++childIndex) {
+                    if (item->child(childIndex)->text(0) == targetName) {
+                        attributeItem = item->child(childIndex);
+                        break;
+                    }
+                }
+
+                item->setCurrentChild(attributeItem);
+                item->setSelected(false);
+                item->viewAttribute(attributeIndex, -1);
+
+                if (attributeItem != nullptr) {
+                    attributeItem->setSelected(true);
+                    modelTreeWidget->setCurrentItem(attributeItem);
+                }
+            }
+
+            rendererWidget->update();
+            showDarkFramelessMessage(
+                QStringLiteral("计算完成"), successText, true);
+        };
+
+    connect(mesh_processing->addAction(
+                QStringLiteral("生成点坐标属性 (Coordinates)")),
+            &QAction::triggered, this,
+            [this, showGeneratedAttribute](bool) {
+        auto scene = rendererWidget->GetScene();
+        if (scene == nullptr || scene->GetCurrentModel() == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用模型"),
+                QStringLiteral("请先打开并在模型树中选中一个模型。"));
+            return;
+        }
+
+        auto input = scene->GetCurrentModel()->GetDataObject();
+        auto filter = iGame::CoordinatesFilter::New();
+        filter->SetInput(input);
+
+        if (!filter->Execute()) {
+            showDarkFramelessMessage(
+                QStringLiteral("执行失败"),
+                QStringLiteral("无法生成点坐标属性：当前模型没有可用的点坐标。"));
+            return;
+        }
+
+        showGeneratedAttribute(
+            input,
+            "PointLocations",
+            QStringLiteral("已生成点属性 PointLocations，并按坐标模长着色。\n"
+                           "展开模型节点即可看到该属性。"));
+    });
+
+    connect(mesh_processing->addAction(
+                QStringLiteral("生成单元中心属性 (Cell Centers)")),
+            &QAction::triggered, this,
+            [this, showGeneratedAttribute](bool) {
+        auto scene = rendererWidget->GetScene();
+        if (scene == nullptr || scene->GetCurrentModel() == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用模型"),
+                QStringLiteral("请先打开并在模型树中选中一个模型。"));
+            return;
+        }
+
+        auto input = scene->GetCurrentModel()->GetDataObject();
+        auto filter = iGame::CellCentersFilter::New();
+        filter->SetInput(input);
+
+        if (!filter->Execute()) {
+            showDarkFramelessMessage(
+                QStringLiteral("执行失败"),
+                QStringLiteral("无法生成单元中心属性：当前模型缺少点或单元连接关系。"));
+            return;
+        }
+
+        showGeneratedAttribute(
+            input,
+            "CellCenters",
+            QStringLiteral("已生成单元属性 CellCenters，并按中心坐标模长着色。\n"
+                           "展开模型节点即可看到该属性。"));
+    });
+
+    connect(mesh_processing->addAction(
+                QStringLiteral("生成单元中心点集 (Cell Centers V2)")),
+            &QAction::triggered, this,
+            [this](bool) {
+        auto scene = rendererWidget->GetScene();
+        if (scene == nullptr || scene->GetCurrentModel() == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用模型"),
+                QStringLiteral("请先打开并在模型树中选中一个包含单元的模型。"));
+            return;
+        }
+
+        auto input = scene->GetCurrentModel()->GetDataObject();
+        auto filter = iGame::CellCentersPointSetFilter::New();
+        filter->SetInput(input);
+
+        if (!filter->Execute()) {
+            showDarkFramelessMessage(
+                QStringLiteral("执行失败"),
+                QStringLiteral("无法生成单元中心点集：当前模型缺少点、单元连接关系，或含有非法单元。"));
+            return;
+        }
+
+        auto output = iGame::DynamicCast<iGame::PointSet>(
+            filter->GetOutput(0));
+        if (output == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("执行失败"),
+                QStringLiteral("Filter 没有产生有效的 PointSet 输出。"));
+            return;
+        }
+
+        /*
+         * 新版输出的几何本身就是中心点，所以使用点模式显示。
+         * 适当增大点尺寸，避免中心点在高分辨率屏幕上难以观察。
+         */
+        output->SetViewStyle(IG_POINTS);
+        output->SetPointSize(5);
+
+        auto* inputItem = modelTreeWidget->getItemFromObject(input);
+        modelTreeWidget->addDataObjectToModelTree(output, Algorithm);
+
+        // 原表面会挡住内部中心点，默认隐藏；用户仍可在模型树中重新打开。
+        if (inputItem != nullptr) {
+            inputItem->changeVisibility(false);
+        }
+
+        rendererWidget->update();
+        showDarkFramelessMessage(
+            QStringLiteral("中心点集生成完成"),
+            QStringLiteral("已为 %1 个输入单元生成 %1 个独立中心点。\n"
+                           "原模型已自动隐藏；新模型以点模式显示。\n"
+                           "展开新模型可查看 CellCenterCoordinates，并选择 X/Y/Z/模长着色。")
+                .arg(output->GetNumberOfPoints()),
+            true);
+    });
+
+    connect(ui->menu_filters->addAction(QStringLiteral("阈值筛选 (Threshold)")),
+            &QAction::triggered, this, [this](bool) {
+        auto scene = rendererWidget->GetScene();
+        if (scene == nullptr || scene->GetCurrentModel() == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用模型"),
+                QStringLiteral("请先打开并在模型树中选中一个模型。"));
+            return;
+        }
+
+        auto input = scene->GetCurrentModel()->GetDataObject();
+        if (input == nullptr || input->GetAttributeSet() == nullptr) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用属性"),
+                QStringLiteral("当前模型没有可用的数据属性。"));
+            return;
+        }
+
+        auto attributes = input->GetAttributeSet();
+        std::vector<int> attributeIds;
+        std::vector<QString> attributeLabels;
+
+        for (int i = 0;
+             i < static_cast<int>(attributes->GetNumberOfAttributes());
+             ++i) {
+            auto& attribute = attributes->GetAttribute(i);
+            if (attribute.IsDeleted() || attribute.pointer == nullptr) {
+                continue;
+            }
+            if (attribute.attachmentType != IG_POINT &&
+                attribute.attachmentType != IG_CELL) {
+                continue;
+            }
+
+            const QString attachment =
+                attribute.attachmentType == IG_POINT
+                    ? QStringLiteral("点")
+                    : QStringLiteral("单元");
+            const QString name = QString::fromStdString(
+                attribute.pointer->GetName());
+
+            attributeIds.push_back(i);
+            attributeLabels.push_back(
+                QStringLiteral("%1 | %2 (%3分量)")
+                    .arg(attachment)
+                    .arg(name)
+                    .arg(attribute.pointer->GetDimension()));
+        }
+
+        if (attributeIds.empty()) {
+            showDarkFramelessMessage(
+                QStringLiteral("无可用属性"),
+                QStringLiteral("当前模型没有点属性或单元属性。"));
+            return;
+        }
+
+        auto* dialog = new igQtFilterDialogDockWidget(this, true);
+        dialog->setFilterTitle(QStringLiteral("阈值筛选 (Threshold)"));
+        dialog->setFilterDescription(
+            QStringLiteral("根据选定属性的分量数值保留符合条件的单元。"));
+
+        const int attributeParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_COMBO_BOX,
+            QStringLiteral("属性数组"),
+            attributeLabels);
+        const int componentParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_COMBO_BOX,
+            QStringLiteral("选定分量"),
+            std::vector<QString>{QStringLiteral("分量 0")});
+        const int methodParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_COMBO_BOX,
+            QStringLiteral("阈值方法"),
+            std::vector<QString>{
+                QStringLiteral("区间 [Lower, Upper]"),
+                QStringLiteral("低于等于 Lower"),
+                QStringLiteral("高于等于 Upper")});
+        const int lowerParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_LINE_EDIT,
+            QStringLiteral("下阈值 (Lower)"), "0");
+        const int upperParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_LINE_EDIT,
+            QStringLiteral("上阈值 (Upper)"), "1");
+        const int allScalarsParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_CHECK_BOX,
+            QStringLiteral("单元所有点都必须通过"), "true");
+        const int continuousParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_CHECK_BOX,
+            QStringLiteral("使用单元连续数值范围"), "false");
+        const int invertParameter = dialog->addParameter(
+            igQtFilterDialogDockWidget::QT_CHECK_BOX,
+            QStringLiteral("反向选择"), "false");
+
+        auto* attributeBox = qobject_cast<QComboBox*>(
+            dialog->getWidget(attributeParameter));
+        auto* componentBox = qobject_cast<QComboBox*>(
+            dialog->getWidget(componentParameter));
+        auto* lowerEdit = qobject_cast<QLineEdit*>(
+            dialog->getWidget(lowerParameter));
+        auto* upperEdit = qobject_cast<QLineEdit*>(
+            dialog->getWidget(upperParameter));
+        auto* allScalarsCheck = qobject_cast<QCheckBox*>(
+            dialog->getWidget(allScalarsParameter));
+        auto* continuousCheck = qobject_cast<QCheckBox*>(
+            dialog->getWidget(continuousParameter));
+
+        auto updateRange = [=]() {
+            if (attributeBox == nullptr || componentBox == nullptr ||
+                lowerEdit == nullptr || upperEdit == nullptr) {
+                return;
+            }
+
+            const int comboIndex = attributeBox->currentIndex();
+            if (comboIndex < 0 ||
+                comboIndex >= static_cast<int>(attributeIds.size())) {
+                return;
+            }
+
+            const auto& attribute = attributes->GetAttribute(
+                attributeIds[comboIndex]);
+            auto array = attribute.pointer;
+            if (array == nullptr || array->GetNumberOfElements() == 0) {
+                return;
+            }
+
+            const int component = componentBox->currentData().toInt();
+            double minimum = std::numeric_limits<double>::infinity();
+            double maximum = -std::numeric_limits<double>::infinity();
+
+            for (IGsize elementId = 0;
+                 elementId < array->GetNumberOfElements();
+                 ++elementId) {
+                const double value = array->GetElementValue(
+                    elementId, component);
+                if (!std::isfinite(value)) {
+                    continue;
+                }
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
+
+            if (std::isfinite(minimum) && std::isfinite(maximum)) {
+                lowerEdit->setText(QString::number(minimum, 'g', 10));
+                upperEdit->setText(QString::number(maximum, 'g', 10));
+            }
+        };
+
+        auto updateComponents = [=]() {
+            if (attributeBox == nullptr || componentBox == nullptr) {
+                return;
+            }
+
+            const int comboIndex = attributeBox->currentIndex();
+            if (comboIndex < 0 ||
+                comboIndex >= static_cast<int>(attributeIds.size())) {
+                return;
+            }
+
+            const auto& attribute = attributes->GetAttribute(
+                attributeIds[comboIndex]);
+            const int dimension = attribute.pointer->GetDimension();
+
+            componentBox->blockSignals(true);
+            componentBox->clear();
+            if (dimension > 1) {
+                componentBox->addItem(QStringLiteral("模长 (Magnitude)"), -1);
+            }
+            for (int component = 0; component < dimension; ++component) {
+                QString label;
+                if (component == 0) label = QStringLiteral("X / 分量 0");
+                else if (component == 1) label = QStringLiteral("Y / 分量 1");
+                else if (component == 2) label = QStringLiteral("Z / 分量 2");
+                else label = QStringLiteral("分量 %1").arg(component);
+                componentBox->addItem(label, component);
+            }
+            componentBox->setCurrentIndex(0);
+            componentBox->blockSignals(false);
+
+            const bool isPointAttribute =
+                attribute.attachmentType == IG_POINT;
+            if (allScalarsCheck != nullptr) {
+                allScalarsCheck->setEnabled(isPointAttribute);
+            }
+            if (continuousCheck != nullptr) {
+                continuousCheck->setEnabled(isPointAttribute);
+            }
+            updateRange();
+        };
+
+        if (attributeBox != nullptr) {
+            connect(attributeBox,
+                    QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    dialog, [=](int) { updateComponents(); });
+        }
+        if (componentBox != nullptr) {
+            connect(componentBox,
+                    QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    dialog, [=](int) { updateRange(); });
+        }
+
+        updateComponents();
+        dialog->setFixedWidth(430);
+        dialog->show();
+
+        dialog->setApplyFunctor([=]() {
+            const int comboIndex = attributeBox == nullptr
+                ? -1
+                : attributeBox->currentIndex();
+            if (comboIndex < 0 ||
+                comboIndex >= static_cast<int>(attributeIds.size())) {
+                showDarkFramelessMessage(
+                    QStringLiteral("参数错误"),
+                    QStringLiteral("请选择一个有效属性数组。"));
+                return;
+            }
+
+            bool lowerOk = false;
+            bool upperOk = false;
+            const double lower = dialog->getDouble(
+                lowerParameter, lowerOk);
+            const double upper = dialog->getDouble(
+                upperParameter, upperOk);
+            if (!lowerOk || !upperOk || lower > upper) {
+                showDarkFramelessMessage(
+                    QStringLiteral("参数错误"),
+                    QStringLiteral("请输入有效阈值，并保证 Lower 不大于 Upper。"));
+                return;
+            }
+
+            const auto& attribute = attributes->GetAttribute(
+                attributeIds[comboIndex]);
+            auto filter = iGame::ThresholdFilter::New();
+            filter->SetInput(input);
+            filter->SetScalarName(attribute.pointer->GetName());
+            filter->SetAttachmentType(attribute.attachmentType);
+            filter->SetSelectedComponent(
+                componentBox == nullptr
+                    ? 0
+                    : componentBox->currentData().toInt());
+            filter->SetLowerThreshold(lower);
+            filter->SetUpperThreshold(upper);
+
+            const int method = dialog->getComboIndex(
+                methodParameter, lowerOk);
+            filter->SetThresholdMethod(
+                method == 1
+                    ? iGame::ThresholdFilter::THRESHOLD_LOWER
+                    : method == 2
+                        ? iGame::ThresholdFilter::THRESHOLD_UPPER
+                        : iGame::ThresholdFilter::THRESHOLD_BETWEEN);
+            filter->SetAllScalars(
+                dialog->getChecked(allScalarsParameter, lowerOk));
+            filter->SetUseContinuousCellRange(
+                dialog->getChecked(continuousParameter, lowerOk));
+            filter->SetInvert(
+                dialog->getChecked(invertParameter, lowerOk));
+
+            if (!filter->Execute()) {
+                showDarkFramelessMessage(
+                    QStringLiteral("执行失败"),
+                    QStringLiteral("阈值筛选失败。请检查模型类型、属性长度和分量选择。"));
+                return;
+            }
+
+            auto output = filter->GetOutput(0);
+            if (output == nullptr) {
+                showDarkFramelessMessage(
+                    QStringLiteral("执行失败"),
+                    QStringLiteral("阈值筛选没有产生输出。"));
+                return;
+            }
+
+            output->SetName(input->GetName() + "_Threshold");
+            auto* inputItem = modelTreeWidget->getItemFromObject(input);
+            modelTreeWidget->addDataObjectToModelTree(output, Algorithm);
+
+            // Threshold output is a subset at exactly the same coordinates as
+            // the input. Hide the input so it does not visually cover the
+            // filtered result.
+            if (inputItem != nullptr) {
+                inputItem->changeVisibility(false);
+            }
+
+            rendererWidget->update();
+
+            auto outputMesh = iGame::DynamicCast<iGame::UnstructuredMesh>(
+                output);
+            if (outputMesh != nullptr) {
+                showDarkFramelessMessage(
+                    QStringLiteral("筛选完成"),
+                    QStringLiteral("已保留 %1 个单元、%2 个点。\n"
+                                   "原模型已自动隐藏，可在模型树中点击眼睛重新显示。")
+                        .arg(outputMesh->GetNumberOfCells())
+                        .arg(outputMesh->GetNumberOfPoints()),
+                    true);
+            }
+            dialog->close();
+        });
+    });
+
     connect(mesh_processing->addAction(QStringLiteral("表面网格简化 (Surface Simplification)")), &QAction::triggered, this, [&](bool checked) {
         if (rendererWidget->GetScene()->GetCurrentModel() == nullptr) return;
 
@@ -1192,7 +1669,7 @@ void igQtMainWindow::initAllFilters() {
                                            "false");
         tuneMeshSimplifyFilterDialog(dialog);
         dialog->show();
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             QString result = "";
 
@@ -1314,7 +1791,7 @@ void igQtMainWindow::initAllFilters() {
 
         tuneMeshSimplifyFilterDialog(dialog);
         dialog->show();
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             QString result = "";
 
@@ -1381,7 +1858,7 @@ void igQtMainWindow::initAllFilters() {
         int faceCountId = dialog->addParameter(igQtFilterDialogDockWidget::QT_LINE_EDIT, "Target Face Count", "0");
 
         dialog->show();
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             QString result = "";
 
@@ -2448,7 +2925,7 @@ void igQtMainWindow::initAllDockWidgetConnectWithAction() {
         int flip_id = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX, "flip", "false");
         dialog->show();
 
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             auto Clamp = [](double x, double l, double r) -> double {
                 if (x < l) return l;
@@ -2511,7 +2988,7 @@ void igQtMainWindow::initAllDockWidgetConnectWithAction() {
         int flip_id = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX, "flip", "false");
         dialog->show();
 
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             auto Clamp = [](double x, double l, double r) -> double {
                 if (x < l) return l;
@@ -3003,7 +3480,7 @@ void igQtMainWindow::initAllMySignalConnections() {
         int flip_id = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX, "flip", "false");
         dialog->show();
 
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             auto Clamp = [](double x, double l, double r) -> double {
                 if (x < l) return l;
@@ -3062,7 +3539,7 @@ void igQtMainWindow::initAllMySignalConnections() {
         int flip_id = dialog->addParameter(igQtFilterDialogDockWidget::QT_CHECK_BOX, "flip", "false");
         dialog->show();
 
-        dialog->setApplyFunctor([=, this]() {
+        dialog->setApplyFunctor([=]() {
             bool ok;
             auto Clamp = [](double x, double l, double r) -> double {
                 if (x < l) return l;

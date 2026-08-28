@@ -20,7 +20,8 @@ else ()
     set(_IGAME_EXAMPLE_CORE_LIBS ${IGAMEVIS_CORE_LIB_TARGETS})
 endif ()
 
-find_package(HDF5 REQUIRED)
+# find_package(HDF5 REQUIRED)
+find_package(HDF5 QUIET)
 find_package(FFMPEG QUIET)
 find_package(AbqSDK QUIET)
 find_package(OpenMP QUIET)
@@ -153,9 +154,25 @@ function(igame_add_example EXAMPLE_TARGET SOURCE)
     set_property(DIRECTORY APPEND PROPERTY IGAME_EXAMPLE_TARGETS ${EXAMPLE_TARGET})
 endfunction()
 
+# function(igame_link_standard_example EXAMPLE_TARGET)
+#     target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+
 function(igame_link_standard_example EXAMPLE_TARGET)
-    target_link_libraries(${EXAMPLE_TARGET} PUBLIC ${_IGAME_EXAMPLE_CORE_LIBS} HDF5::HDF5)
+    target_link_libraries(
+        ${EXAMPLE_TARGET}
+        PUBLIC
+        ${_IGAME_EXAMPLE_CORE_LIBS}
+    )
+
+    if (HDF5_FOUND)
+        target_link_libraries(
+            ${EXAMPLE_TARGET}
+            PUBLIC
+            HDF5::HDF5
+        )
+    endif()
 endfunction()
+
 
 function(igame_register_example_test EXAMPLE_TARGET)
     if (NOT TARGET ${EXAMPLE_TARGET})
@@ -203,6 +220,12 @@ igame_add_example(testSetRenderingPressure Rendering/SetRenderingPressure.cpp)
 
 # Attribute
 igame_add_example(testChangeRange Attribute/TestSubDataRangeChangeAndRecollect.cpp)
+igame_add_example(testCoordinates Filter/Coordinates/TestCoordinates.cpp)
+igame_add_example(testCoordinatesModel Filter/Coordinates/TestCoordinatesModel.cpp)
+igame_add_example(testCellCentersModel Filter/CellCenters/TestCellCentersModel.cpp)
+igame_add_example(testCellCentersPointSetModel Filter/CellCentersPointSet/TestCellCentersPointSetModel.cpp)
+igame_add_example(testCellCentersPointSetRender Filter/CellCentersPointSet/TestCellCentersPointSetRender.cpp)
+igame_add_example(testThreshold Filter/Threshold/TestThreshold.cpp)
 
 # Vector / Tensor
 igame_add_example(testVector Filter/Vector/TestVector.cpp)
