@@ -2643,6 +2643,7 @@ void igQtMainWindow::initAllFilters() {
 
                 auto* dialog = new igQtFilterDialogDockWidget(this, true);
                 dialog->setFilterTitle(QStringLiteral("折线简化 (Decimate Polyline)"));
+                dialog->setMinimumWidth(520);
                 dialog->setFilterDescription(
                         QStringLiteral("与 ParaView 一致，支持角度、自定义点字段和距离三种策略；"
                                        "每条折线独立简化，端点始终保留。"));
@@ -2700,11 +2701,36 @@ void igQtMainWindow::initAllFilters() {
                 auto* strategyCombo = qobject_cast<QComboBox*>(dialog->getWidget(strategyId));
                 auto* customFieldCombo = qobject_cast<QComboBox*>(dialog->getWidget(customFieldId));
                 if (strategyCombo) strategyCombo->setCurrentIndex(2);
-                if (customFieldCombo) customFieldCombo->setEnabled(false);
+
+                // ParaView exposes FieldName as a child property of the custom-field
+                // strategy. Keep the whole row hidden for Angle/Distance and reveal it
+                // only when Custom Field is selected.
+                auto findRowLabel = [](QWidget* value) -> QLabel* {
+                    if (!value || !value->parentWidget()) return nullptr;
+                    const auto grids = value->parentWidget()->findChildren<QGridLayout*>();
+                    for (auto* grid : grids) {
+                        const int itemIndex = grid->indexOf(value);
+                        if (itemIndex < 0) continue;
+                        int row = 0, column = 0, rowSpan = 0, columnSpan = 0;
+                        grid->getItemPosition(itemIndex, &row, &column, &rowSpan, &columnSpan);
+                        for (int c = 0; c < grid->columnCount(); ++c) {
+                            auto* item = grid->itemAtPosition(row, c);
+                            if (!item || item->widget() == value) continue;
+                            if (auto* label = qobject_cast<QLabel*>(item->widget())) return label;
+                        }
+                    }
+                    return nullptr;
+                };
+                auto* customFieldLabel = findRowLabel(customFieldCombo);
+                auto setCustomFieldVisible = [customFieldCombo, customFieldLabel](bool visible) {
+                    if (customFieldLabel) customFieldLabel->setVisible(visible);
+                    if (customFieldCombo) customFieldCombo->setVisible(visible);
+                };
+                setCustomFieldVisible(false);
                 if (strategyCombo && customFieldCombo) {
                     connect(strategyCombo, qOverload<int>(&QComboBox::currentIndexChanged), dialog,
-                            [customFieldCombo](int index) {
-                                customFieldCombo->setEnabled(index == 1);
+                            [setCustomFieldVisible](int index) {
+                                setCustomFieldVisible(index == 1);
                             });
                 }
                 dialog->setParameterColumnStretch(0, 1);

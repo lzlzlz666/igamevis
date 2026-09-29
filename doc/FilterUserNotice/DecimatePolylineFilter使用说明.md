@@ -71,7 +71,7 @@ filter->SetCustomFieldName("OriginalPointId");
 
 ```text
 D:\igame\test\DecimatePolyline_Curve.vtk
-Examples\Models\DecimatePolyline_Curve.vtk（仓库内同内容副本，供 CTest 使用）
+Examples\Models\DecimatePolyline_Curve.vtk（仓库内同内容副本）
 ```
 
 它是 Legacy VTK ASCII `POLYDATA`，包含：
@@ -81,7 +81,7 @@ Examples\Models\DecimatePolyline_Curve.vtk（仓库内同内容副本，供 CTes
 - 点属性 `OriginalPointId` 和 `CurveParameter`。
 - 单元属性 `CurveKind`。
 
-使用默认 `TargetReduction = 0.9`、默认最大误差时，ParaView/iGameVis 都应输出 1 条折线、15 个保留点。用 ParaView 6.1.1 实测的 `OriginalPointId` 顺序是 `0, 10, 27, 37, 42, 56, 63, 73, 87, 92, 108, 123, 139, 144, 150`；自动回归会逐项核对这组结果。开放折线的原始点 `0` 和 `150` 必须保留。
+使用默认 `TargetReduction = 0.9`、默认最大误差时，ParaView/iGameVis 都应输出 1 条折线、15 个保留点。用 ParaView 6.1.1 实测的 `OriginalPointId` 顺序是 `0, 10, 27, 37, 42, 56, 63, 73, 87, 92, 108, 123, 139, 144, 150`。开放折线的原始点 `0` 和 `150` 必须保留。
 
 同一模型在 `TargetReduction = 0.9`、默认最大误差下的三种 ParaView 6.1.1 对照结果如下；Custom Field 选择 `OriginalPointId`：
 
@@ -91,18 +91,19 @@ Examples\Models\DecimatePolyline_Curve.vtk（仓库内同内容副本，供 CTes
 | Custom Field | `0, 8, 20, 34, 48, 64, 76, 88, 96, 106, 114, 124, 132, 143, 150` |
 | Distance | `0, 10, 27, 37, 42, 56, 63, 73, 87, 92, 108, 123, 139, 144, 150` |
 
-自动测试会对三组点号逐项比较，而不只是比较最终点数。
-此外还会用浮点字段 `CurveParameter` 检查 Custom Field 策略，其 ParaView 参考点号为 `0, 12, 25, 34, 46, 59, 68, 75, 88, 97, 106, 115, 128, 137, 150`。
+开发校验时已对三组点号逐项比较，而不只是比较最终点数。浮点字段 `CurveParameter` 的 Custom Field 参考点号为 `0, 12, 25, 34, 46, 59, 68, 75, 88, 97, 106, 115, 128, 137, 150`。
 
-自动回归程序：
+示例程序：
 
 ```powershell
 cmake --build build --config Release --target testDecimatePolyline
-.\build\Examples\Release\testDecimatePolyline.exe
-# 也可显式指定录屏使用的副本：
-.\build\Examples\Release\testDecimatePolyline.exe `
-  D:\igame\test\DecimatePolyline_Curve.vtk
+cd .\build\Examples
+.\Release\testDecimatePolyline.exe D:\igame\test\DecimatePolyline_Curve.vtk distance
+.\Release\testDecimatePolyline.exe D:\igame\test\DecimatePolyline_Curve.vtk angle
+.\Release\testDecimatePolyline.exe D:\igame\test\DecimatePolyline_Curve.vtk custom
 ```
+
+必须从 `build\Examples` 目录启动，因为示例渲染器需要从该目录读取部署后的 `Resources\Shaders`。第二个参数可取 `distance`、`angle` 或 `custom`；`custom` 示例使用 `OriginalPointId`。程序执行 Filter 后直接打开渲染窗口，关闭窗口后即可运行下一种策略。
 
 另外还提供以下同为 `POLYDATA + LINES` 的对照模型：
 
@@ -111,7 +112,7 @@ cmake --build build --config Release --target testDecimatePolyline
 - `DecimatePolyline_ClosedLoop.vtk`：首尾点号重复的闭合折线。
 - `DecimatePolyline_MaximumError.vtk`：验证 `MaximumError = 0` 时只删除零误差点。
 
-程序覆盖开放折线、三种简化策略、最大误差、多折线、共享点、闭环、二点线、显式折线与多边形混合输入、属性重映射、错误输入类型及真实 VTK 文件读取。
+示例代码保持与仓库其他 Filter 测试一致的简洁结构：读取模型、设置策略、执行 Filter，然后将输出加入场景显示。
 
 ## 与 ParaView 对比
 
